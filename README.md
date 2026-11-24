@@ -61,9 +61,10 @@ Pin a `rev`, not a branch: a door that changes under a product between builds is
 
 ### Version and axum
 
-This crate is **0.3.0 and built on axum 0.8**. Every fleet app is on axum 0.8; a 0.7 host cannot
+This crate is **0.4.0 and built on axum 0.8**. Every fleet app is on axum 0.8; a 0.7 host cannot
 consume this crate at all (an axum 0.7 `Router` cannot merge into an 0.8 `Router`) and must stay on
-the last 0.7 revision (`15aef65`) with its own adapter until it upgrades.
+the axum-0.7 maintenance line (`0.1.x`, tag `v0.1.2-axum07` — same behaviour, `Forbidden` + filtering
+included) with its own adapter until it upgrades.
 
 `examples/reference-door.rs` is the copy-paste template: four tools, three key kinds, one operator
 key, one revoked key, audit to a file.
@@ -92,9 +93,19 @@ they may not use. Pin it with the contract test
 Also set `.min_role(Role::Admin)` on every tool of such a door — defence in depth, so a future
 resolver slip cannot re-open the surface.
 
+### `tools/list` is filtered by the caller's role
+
+A door lists exactly the tools the resolved credential could call: a tool whose `min_role` is above
+the caller's role is not in `tools/list` at all. A mixed door (customers on workspace keys, the
+operator on an admin key) therefore cannot advertise the operator's cross-workspace tools to a
+customer, and a read-only credential is not told about write tools it would be refused. Paging is
+over the FILTERED list, so `nextCursor` never addresses a tool the caller may not see. `tools/call`
+still enforces `min_role` (the resolver and the role are two locks, not one). Prove it with
+`--admin-only-tool NAME` on `scripts/door-contract.py`.
+
 ## Verification (this revision)
 
-- `cargo test` — 19 unit + 13 contract + 1 mount test on axum 0.8, including 401 with no detail,
+- `cargo test` — 20 unit + 14 contract + 1 mount test on axum 0.8, including 401 with no detail,
   **403 (`-32003`, no tool list) for a live customer credential on an operator-only door**,
   foreign id → `not_found` (and the owner still reads it), role gates, pagination to exhaustion,
   annotations on every tool, redaction, notification 202, batch refusal, parse error, and

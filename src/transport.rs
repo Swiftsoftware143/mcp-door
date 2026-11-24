@@ -338,7 +338,12 @@ impl Door {
             "ping" => self.rpc_response(StatusCode::OK, rpc_ok(&id, json!({}), &info)),
             "tools/list" => {
                 let cursor = parsed.pointer("/params/cursor").and_then(|c| c.as_str());
-                match self.registry.page(cursor, self.config.page_size) {
+                // Filtered by THIS caller's role: a door lists only what this credential could
+                // actually call, so an operator-only tool name never reaches a customer's list.
+                match self
+                    .registry
+                    .page(caller.role, cursor, self.config.page_size)
+                {
                     Ok((tools, next)) => {
                         let mut result = json!({ "tools": tools });
                         if let Some(c) = next {

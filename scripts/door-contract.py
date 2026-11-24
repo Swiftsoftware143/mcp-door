@@ -16,6 +16,8 @@ TRANSPORT and PROTOCOL behaviours that must be identical in every app:
  10  notification            -> 202 with no body
  11  ping                    -> 200 result
  12  every result carries _meta.io.modelcontextprotocol/serverInfo
+ 13  tools/list is filtered to the caller's role: an --admin-only-tool name is absent for the
+     workspace (and read-only) credential and present for --admin-token; admin is a superset.
 
 App-specific acceptance (foreign id is not_found, role gates, audit lines) belongs to the port's own
 card: this script cannot know your tool names and arguments. Pass --tool NAME=JSON to additionally
@@ -86,6 +88,24 @@ def has_server_info(body) -> bool:
     return "io.modelcontextprotocol/serverInfo" in meta
 
 
+def list_tool_names(url: str, token: str) -> list[str]:
+    """Every tool name one credential is offered, paged to exhaustion."""
+    names: list[str] = []
+    cursor, pages = None, 0
+    while True:
+        params = {"_meta": {"io.modelcontextprotocol/protocolVersion": VERSION_NEWEST}}
+        if cursor:
+            params["cursor"] = cursor
+        status, body = rpc(url, token, "tools/list", params, ident=200 + pages)
+        if status != 200 or "result" not in body:
+            return names
+        names.extend(t.get("name", "") for t in (body["result"].get("tools") or []))
+        pages += 1
+        cursor = body["result"].get("nextCursor")
+        if not cursor or pages > 100:
+            return names
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
@@ -95,6 +115,8 @@ def main() -> int:
     ap.add_argument("--revoked-token")
     ap.add_argument("--bogus-token", default="mcp_door_contract_bogus_token")
     ap.add_argument("--tool", action="append", default=[], help="NAME=JSON to execute")
+    ap.add_argument("--admin-only-tool", action="append", default=[],
+                    help="a tool only an admin credential may call; must be absent below admin")
     args = ap.parse_args()
     url = args.url
 
@@ -179,6 +201,33 @@ def main() -> int:
         if problems:
             missing.append(f"{t.get('name')}:{'+'.join(problems)}")
     record(not missing, "every tool is annotated and has an object schema", "; ".join(missing[:8]))
+
+    # 13 role-filtered listing: a door must not advertise a tool it will refuse. `tools` above is
+    # the workspace credential's surface; compare it with the operator's and the named proof tools.
+    workspace_names = {t.get("name") for t in tools}
+    admin_names = set()
+    if args.admin_token:
+        admin_names = set(list_tool_names(url, args.admin_token))
+        record(workspace_names <= admin_names,
+               "admin sees every tool a workspace credential sees (filtering never hides a readable tool)",
+               f"workspace={sorted(workspace_names - admin_names)}")
+    readonly_names = set()
+    if args.readonly_token:
+        readonly_names = set(list_tool_names(url, args.readonly_token))
+        record(readonly_names <= workspace_names,
+               "read-only sees no tool above its own role",
+               f"extra={sorted(readonly_names - workspace_names)}")
+    for name in args.admin_only_tool:
+        leaks = [label for label, visible in
+                 (("workspace", workspace_names), ("read_only", readonly_names))
+                 if name in visible]
+        record(not leaks,
+               f"{name} is not listed to a non-admin credential",
+               f"visible to {leaks}")
+        if args.admin_token:
+            record(name in admin_names,
+                   f"{name} is still listed to the admin credential",
+                   f"admin tools={sorted(admin_names)}")
 
     # 8-9 protocol errors
     status, body = rpc(url, args.workspace_token, "tools/call",

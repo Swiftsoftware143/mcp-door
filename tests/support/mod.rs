@@ -130,6 +130,7 @@ pub fn registry(store: Store) -> Registry {
                 "list_items",
                 "List the items in this workspace. Returns count and items. Read-only.",
             )
+            .min_role(Role::ReadOnly)
             .schema(json!({
                 "type": "object",
                 "properties": { "limit": { "type": "integer" } },
@@ -149,6 +150,7 @@ pub fn registry(store: Store) -> Registry {
                 "get_item",
                 "Fetch one item by id from this workspace. A foreign id answers not_found.",
             )
+            .min_role(Role::ReadOnly)
             .schema(json!({
                 "type": "object",
                 "properties": { "id": { "type": "string" } },
