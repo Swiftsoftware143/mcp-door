@@ -61,7 +61,7 @@ Pin a `rev`, not a branch: a door that changes under a product between builds is
 
 ### Version and axum
 
-This crate is **0.2.0 and built on axum 0.8**. Every fleet app is on axum 0.8; a 0.7 host cannot
+This crate is **0.3.0 and built on axum 0.8**. Every fleet app is on axum 0.8; a 0.7 host cannot
 consume this crate at all (an axum 0.7 `Router` cannot merge into an 0.8 `Router`) and must stay on
 the last 0.7 revision (`15aef65`) with its own adapter until it upgrades.
 
@@ -75,9 +75,27 @@ that alters wire behaviour bumps the minor version and is recorded in the fleet 
 constants mirror `/opt/swift/mcp` (the read hub) — the two must never disagree about what version
 they speak.
 
+### Access classes: the resolver decides 401 vs 403
+
+Two things are called "a refusal" and they are not the same:
+
+| The caller | Resolver returns | Door answers |
+|---|---|---|
+| no bearer, unknown token, revoked/expired row | `AuthError::Invalid` / `Revoked` / `Expired` / `Missing` | **401** `-32001`, `WWW-Authenticate: Bearer` |
+| a live credential whose role may not reach this door at all | `AuthError::Forbidden` | **403** `-32003`, no tool list, no `WWW-Authenticate` |
+| authenticated but a tool's minimum role is higher | the tool runs and answers `ToolError::Forbidden` (an MCP `isError` result) | 200 |
+
+An **admin-only door** must return `AuthError::Forbidden` for a customer key: 401 would tell a live
+customer their key is unknown, and any tool list at all (even an empty one) advertises a surface
+they may not use. Pin it with the contract test
+`a_live_customer_credential_on_an_operator_door_is_403_and_lists_no_tool` and on the live door.
+Also set `.min_role(Role::Admin)` on every tool of such a door — defence in depth, so a future
+resolver slip cannot re-open the surface.
+
 ## Verification (this revision)
 
-- `cargo test` — 19 unit + 12 contract + 1 mount test on axum 0.8, including 401 with no detail,
+- `cargo test` — 19 unit + 13 contract + 1 mount test on axum 0.8, including 401 with no detail,
+  **403 (`-32003`, no tool list) for a live customer credential on an operator-only door**,
   foreign id → `not_found` (and the owner still reads it), role gates, pagination to exhaustion,
   annotations on every tool, redaction, notification 202, batch refusal, parse error, and
   `mount()` merging into a host that already serves `GET /healthz` and `GET /mcp` (host routes

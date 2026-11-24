@@ -30,6 +30,12 @@ pub const ERR_INVALID_PARAMS: i64 = -32602;
 pub const ERR_INTERNAL: i64 = -32603;
 /// MCP: the caller's credential was missing, malformed, revoked or unknown.
 pub const ERR_UNAUTHORIZED: i64 = -32001;
+/// The credential is live but this door is operator-only and the caller is not an operator.
+///
+/// Distinct from [`ERR_UNAUTHORIZED`] on purpose: 401 means "I do not know you" and invites a
+/// retry with another token; 403 means "I know you, and this door is not yours". An admin-only
+/// door must never answer a customer key with a tool list, and must not pretend the key is unknown.
+pub const ERR_FORBIDDEN: i64 = -32003;
 /// MCP 2026-07-28: `UnsupportedProtocolVersionError`. The data carries the supported list so the
 /// client can retry instead of guessing.
 pub const ERR_UNSUPPORTED_VERSION: i64 = -32022;

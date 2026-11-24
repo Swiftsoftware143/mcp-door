@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use crate::audit::{AuditRecord, AuditSink, FileAudit, NullAudit};
 use crate::credential::{AuthError, Caller, CredentialResolver, Role};
 use crate::protocol::{
-    self, requested_version, rpc_error, rpc_ok, unsupported_version, ServerInfo,
+    self, requested_version, rpc_error, rpc_ok, unsupported_version, ServerInfo, ERR_FORBIDDEN,
     ERR_INVALID_PARAMS, ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_PARSE, ERR_UNAUTHORIZED,
     SUPPORTED_VERSIONS,
 };
@@ -232,6 +232,17 @@ impl Door {
         };
         let caller = match self.resolver.resolve(&token).await {
             Ok(c) => c,
+            Err(AuthError::Forbidden) => {
+                // Authenticated, not authorised: the credential is live but its role may not
+                // reach this door at all (an admin-only door handed a customer key). Answer 403
+                // and no tool list; a 401 would tell a live customer their key is unknown.
+                self.audit_auth(
+                    None,
+                    "forbidden: live credential without the role this door requires",
+                )
+                .await;
+                return self.forbidden(ERR_FORBIDDEN, "forbidden");
+            }
             Err(e) => {
                 self.audit_auth(None, &format!("unauthorized: {}", e.audit_reason()))
                     .await;
@@ -483,6 +494,12 @@ impl Door {
             Json(body),
         )
             .into_response()
+    }
+
+    /// 403: the caller was recognised and refused. No `WWW-Authenticate` — nothing to retry.
+    fn forbidden(&self, code: i64, message: &str) -> Response {
+        let body = rpc_error(&Value::Null, code, message, None);
+        (StatusCode::FORBIDDEN, Json(body)).into_response()
     }
 
     async fn audit_call(
