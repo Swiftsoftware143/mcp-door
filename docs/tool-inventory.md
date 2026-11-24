@@ -237,7 +237,17 @@ Never exposed: `api_keys`, `provider_keys`, `impersonation_sessions`, `google_pl
 
 ---
 
-## XDispatch — ADMIN ONLY (Giraudy Capital operates it via MCP)
+## XDispatch — CONJOINED for its one customer company (t_56aff84c, supersedes "admin only")
+
+**David, 2026-11-24: XDispatch has exactly one customer company (Xride) besides the platform, and the
+two sides are CONJOINED for that account** — one credential, one door. `POST /mcp` serves the 12
+dispatch verbs AND the 8 operator reads below, scoped to the company the key owns (a company key) or
+across companies (the platform key). `POST /admin/mcp` stays as the operator's read-only door and is
+now a subset. Conjoining is about VERBS, never reach: a foreign company answers `404 not_found`.
+Live census: 2 credentials (platform read-only + the Xride company key); the company key was NOT
+re-minted and no consumer was re-keyed.
+
+The table below is the operator half (`POST /admin/mcp`, and the same eight on `POST /mcp`).
 
 Door: `POST /admin/mcp` (separate from the `/dispatch` console). **Live keys are real consumers:**
 `/home/bot-giraudy/.hermes/xdispatch-api.env` holds a super-admin key (read-only across companies) and
