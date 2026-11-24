@@ -1,0 +1,6 @@
+# Pin the toolchain so CI and the build box compile with the same compiler.
+# Fleet rule: 1.97.1 everywhere (workflows pin dtolnay/rust-toolchain@1.97.1).
+[toolchain]
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
