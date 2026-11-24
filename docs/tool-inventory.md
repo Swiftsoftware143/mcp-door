@@ -34,7 +34,7 @@ that lane implements, nothing more.
 | FunnelSwift | `/mcp` | customer | `api_keys` (`tenant_id`, `key_prefix`, `revoked_at`) | `tenant_id` | 11 reads |
 | IncentiveSwift | `/mcp` | customer | `api_keys` (`tenant_id`, `prefix`, `is_active`) — **key table uses `tenant_id`, data uses `account_id`** | `account_id` | 10 reads |
 | WorkflowSwift | `/mcp` | customer | `api_keys` (`aid`, `prefix`, `is_active`) | `aid` | 10 reads |
-| ADASwift | `/mcp` | customer | `api_keys` (`tenant_id`, `key_prefix`, `revoked_at`) | `tenant_id` | 8 reads |
+| ADASwift | `/mcp` | **admin only** (David, 2026-11-24: "clients get no MCP access at all") | `api_keys` (`tenant_id`, `key_prefix`, `revoked_at`, `role` must be a platform-admin role) | `tenant_id` | 8 reads + 3 operator tools |
 | MissedCall Respondr | `/mcp` | customer | `api_keys` (`tenant_id`, `key_prefix`, `revoked_at`) | `tenant_id` | 9 reads |
 | Multi-Directory | `/admin/mcp` | **admin only** | `api_keys` (`tenant_id`, `key_prefix`, `is_active`) — tenant id is **not** a directory id | `directory_id` | 9 reads |
 | XDispatch | `/admin/mcp` | **admin only** | `machine_keys` (`tenant_id`) + its own resolver | `tenant_id` | 8 reads |
@@ -152,25 +152,39 @@ Never exposed: `api_keys`, `user_api_keys`, `n8n_account_config`, `provider_keys
 
 ---
 
-## ADASwift — customer app
+## ADASwift — admin-only app (David's ruling 2026-11-24, kanban t_dfc5b182)
 
-Door: `POST /mcp`, `api_keys.tenant_id` / `key_prefix` / `revoked_at IS NULL`. Scans hang off
-`client_scan_settings.client_id` and reports off `scan_reports.client_id`; `clients.tenant_id` is the
-workspace link.
+Door: `POST /mcp`, `api_keys.tenant_id` / `key_prefix` / `revoked_at IS NULL` **and a platform-admin
+`role`** (plus, for a key minted by a person, that person's live row still being an active
+platform admin). A live customer key is refused at the credential: **403 + JSON-RPC `-32003`, no
+tool list**; an unknown or revoked key is 401. Scans hang off `client_scan_settings.client_id` and
+reports off `scan_reports.client_id`; `clients.tenant_id` is the workspace link.
+
+The operator's scope is every workspace. The eight reads keep the SQL they shipped with (each still
+filters `tenant_id::text = any($n::text[])`); only the id list bound into them changed — from "the
+key's own tenant" to "every tenant", because there is exactly one class of caller.
 
 | Tool | Reads / writes | Scope | Role | Notes |
 |---|---|---|---|---|
-| `adaswift_list_websites` | read: `websites` (2) | `websites.tenant_id` | read_only | domain, compliance status, widget active |
-| `adaswift_list_scans` | read: `scan_queue` (24) | `scan_queue.tenant_id` | read_only | status, domain, queued/completed |
-| `adaswift_list_reports` | read: `scan_reports` (join `clients`) | `clients.tenant_id` | read_only | score, error/warning/notice counts — the numbers, not `scan_results` jsonb |
-| `adaswift_list_violations` | read: violations extracted from the latest `scan_reports.scan_results` | same | read_only | Return rule id + impact + element selector; cap rows |
-| `adaswift_list_tasks` | read: `tasks` (0) — remediation tasks | `tasks.tenant_id` | read_only | **Empty fleet-wide** — say so |
-| `adaswift_list_clients` | read: `clients` (3) | `clients.tenant_id` | read_only | — |
-| `adaswift_list_events` | read: `events` (0) + `activity_log` | `tenant_id` | read_only | — |
-| `adaswift_list_invoices` | read: `invoices` (6) | `tenant_id` | read_only | No payment refs |
-| *Phase 2 (L2)* | `adaswift_queue_scan` (spends a scan), `adaswift_resolve_task` | — | workspace | Own card |
+| `adaswift_list_websites` | read: `websites` (2) | `websites.tenant_id` | admin | domain, compliance status, widget active |
+| `adaswift_list_scans` | read: `scan_queue` (24) | `scan_queue.tenant_id` | admin | status, domain, queued/completed |
+| `adaswift_list_reports` | read: `scan_reports` (join `clients`) | `clients.tenant_id` | admin | score, error/warning/notice counts — the numbers, not `scan_results` jsonb |
+| `adaswift_list_violations` | read: violations extracted from the latest `scan_reports.scan_results` | same | admin | Return rule id + impact + element selector; cap rows |
+| `adaswift_list_tasks` | read: `tasks` (0) — remediation tasks | `tasks.tenant_id` | admin | **Empty fleet-wide** — say so |
+| `adaswift_list_clients` | read: `clients` (3) | `clients.tenant_id` | admin | — |
+| `adaswift_list_events` | read: `events` (0) + `activity_log` | `tenant_id` | admin | — |
+| `adaswift_list_invoices` | read: `invoices` (6) | `tenant_id` | admin | No payment refs |
+| `adaswift_list_workspaces` | read: `tenants` + per-workspace counts | all accounts | admin | flags system / portfolio / canary / probe rows by the console's own tests |
+| `adaswift_queue_scan` | **write**: one `scan_queue` row per target | the named `workspace_id` | admin | one pending scan per workspace, never stacked; `client_id` or `domain`, or every client with a domain |
+| `adaswift_set_monthly_scan` | **write**: `client_scan_settings.monthly_scan_enabled` | the named `workspace_id` + `client_id` | admin | the switch the monthly scheduler reads; queues nothing |
 
 Never exposed: `api_keys`, `provider_keys`, `pending_emails`, `scan_results` raw blob (huge).
+No close/erase tool and no workspace suspension over MCP: those stay console/log-in acts.
+
+Proof (live, 2026-11-24): `apps/ADASwift/scripts/mcp-door-acceptance.py` — 24/24 against
+`http://127.0.0.1:8087/mcp` with a real container; customer keys 403 on tools/list AND tools/call,
+unknown/revoked/no-bearer 401, operator key sees the eleven tools, both writes proven in the DB,
+audit 0600 with zero token strings, teardown residue 0.
 
 ---
 
