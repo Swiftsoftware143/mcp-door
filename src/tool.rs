@@ -420,16 +420,30 @@ impl Registry {
         problems
     }
 
-    /// One page of descriptors plus the cursor for the next page.
+    /// One page of descriptors **the caller's role may actually call**, plus the next cursor.
     ///
-    /// Paged deterministically (registration order) because the surface is unbounded: a single
-    /// unpaginated list silently truncates at some size and a client then believes it has seen all.
+    /// A tool whose `min_role` the caller cannot satisfy is not listed at all. Listing it was a
+    /// real fleet defect: `engine_list_workspaces` sat in every customer key's `tools/list` while
+    /// `tools/call` refused it, so a model was told about a surface it could never use. Visibility
+    /// is not permission, but it is a claim — and a door must not make a claim it will refuse.
+    ///
+    /// Paged deterministically (registration order, filtered first) because the surface is
+    /// unbounded: a single unpaginated list silently truncates at some size and a client then
+    /// believes it has seen all. Cursors index the FILTERED list; a cursor is only ever used by the
+    /// credential that received it.
     pub fn page(
         &self,
+        role: Role,
         cursor: Option<&str>,
         page_size: usize,
     ) -> Result<(Vec<Value>, Option<String>), ToolError> {
-        let total = self.items.len();
+        let visible: Vec<ToolSpec> = self
+            .items
+            .iter()
+            .map(|t| t.spec())
+            .filter(|s| role.can(s.min_role))
+            .collect();
+        let total = visible.len();
         let start = match cursor {
             None => 0,
             Some(c) => c
@@ -444,9 +458,9 @@ impl Registry {
         }
         let size = page_size.max(1);
         let end = (start + size).min(total);
-        let tools = self.items[start..end]
+        let tools = visible[start..end]
             .iter()
-            .map(|t| t.spec().to_json())
+            .map(|s| s.to_json())
             .collect::<Vec<_>>();
         let next = if end < total {
             Some(end.to_string())
@@ -488,6 +502,43 @@ mod tests {
     }
 
     #[test]
+    fn listing_is_filtered_by_the_callers_role() {
+        // One tool per role floor. A credential sees exactly the tools it could call, and nothing
+        // about the ones it could not — the admin tool name must not leak into a customer's list.
+        let registry = Registry::new()
+            .with_fn(
+                ToolSpec::read("read_tool", "Reads one row of this workspace, read-only.")
+                    .min_role(Role::ReadOnly),
+                |_, _| Box::pin(async { Ok(json!({ "count": 0 })) }),
+            )
+            .with_fn(
+                ToolSpec::write("write_tool", "Writes one row inside this workspace only.")
+                    .min_role(Role::Workspace),
+                |_, _| Box::pin(async { Ok(json!({ "count": 0 })) }),
+            )
+            .with_fn(
+                ToolSpec::read("admin_tool", "Operator only: every workspace with counts.")
+                    .min_role(Role::Admin),
+                |_, _| Box::pin(async { Ok(json!({ "count": 0 })) }),
+            );
+        let names = |role| {
+            let (tools, _) = registry.page(role, None, 50).unwrap();
+            let mut n: Vec<String> = tools
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_string())
+                .collect();
+            n.sort();
+            n
+        };
+        assert_eq!(names(Role::ReadOnly), vec!["read_tool"]);
+        assert_eq!(names(Role::Workspace), vec!["read_tool", "write_tool"]);
+        assert_eq!(
+            names(Role::Admin),
+            vec!["admin_tool", "read_tool", "write_tool"]
+        );
+    }
+
+    #[test]
     fn pagination_is_exhaustive_and_stable() {
         let mut registry = Registry::new();
         for i in 0..5 {
@@ -495,12 +546,12 @@ mod tests {
             let spec = ToolSpec::read(&name, "A perfectly adequate description of the tool.");
             registry = registry.with_fn(spec, |_, _| Box::pin(async { Ok(json!({ "count": 0 })) }));
         }
-        let (page1, cursor) = registry.page(None, 2).unwrap();
+        let (page1, cursor) = registry.page(Role::Admin, None, 2).unwrap();
         assert_eq!(page1.len(), 2);
         assert_eq!(cursor.as_deref(), Some("2"));
-        let (page2, cursor2) = registry.page(cursor.as_deref(), 2).unwrap();
+        let (page2, cursor2) = registry.page(Role::Admin, cursor.as_deref(), 2).unwrap();
         assert_eq!(page2.len(), 2);
-        let (page3, none) = registry.page(cursor2.as_deref(), 2).unwrap();
+        let (page3, none) = registry.page(Role::Admin, cursor2.as_deref(), 2).unwrap();
         assert_eq!(page3.len(), 1);
         assert!(none.is_none());
         let mut names: Vec<_> = page1

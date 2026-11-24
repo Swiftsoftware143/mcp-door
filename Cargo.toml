@@ -1,6 +1,6 @@
 [package]
 name = "mcp-door"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.75"
 description = "One shared MCP door for every SwiftSoftware product: JSON-RPC 2.0 transport, credential resolution contract, tenant scoping, 404-not-403, audit, tool registry."

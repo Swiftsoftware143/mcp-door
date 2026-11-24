@@ -147,7 +147,7 @@ async fn tools_list_paginates_exhaustively_and_every_tool_is_annotated() {
         };
         let (status, body) = rpc(
             &f.url,
-            Some(TOK_A),
+            Some(TOK_ADMIN),
             json!({
                 "jsonrpc": "2.0", "id": 4, "method": "tools/list",
                 "params": params
@@ -184,6 +184,72 @@ async fn tools_list_paginates_exhaustively_and_every_tool_is_annotated() {
     assert_eq!(
         names,
         vec!["create_item", "get_item", "list_items", "list_tenants"]
+    );
+}
+
+#[tokio::test]
+async fn tools_list_shows_each_caller_only_what_it_can_call() {
+    // The fleet defect this test exists for: an operator-only tool NAME in a customer credential's
+    // `tools/list` is a surface the door will refuse. Visibility is not permission, but a door must
+    // not advertise what it will not honour (kanban t_201dadc5). Admin is a superset of workspace,
+    // workspace a superset of read-only — never the other way round.
+    let f = start().await;
+    let listed = |token: &'static str| {
+        let url = f.url.clone();
+        async move {
+            let mut names: Vec<String> = Vec::new();
+            let mut cursor: Option<String> = None;
+            let mut pages = 0;
+            loop {
+                let params = match &cursor {
+                    Some(c) => json!({ "cursor": c }),
+                    None => json!({}),
+                };
+                let (status, body) = rpc(
+                    &url,
+                    Some(token),
+                    json!({ "jsonrpc": "2.0", "id": 9, "method": "tools/list", "params": params }),
+                )
+                .await;
+                assert_eq!(status, 200);
+                names.extend(
+                    body["result"]["tools"]
+                        .as_array()
+                        .expect("a tool list")
+                        .iter()
+                        .map(|t| t["name"].as_str().unwrap().to_string()),
+                );
+                pages += 1;
+                assert!(pages < 10, "pagination must terminate");
+                match body["result"]["nextCursor"].as_str() {
+                    Some(c) => cursor = Some(c.to_string()),
+                    None => break,
+                }
+            }
+            names.sort();
+            names
+        }
+    };
+    assert_eq!(listed(TOK_READONLY).await, vec!["get_item", "list_items"]);
+    assert_eq!(
+        listed(TOK_A).await,
+        vec!["create_item", "get_item", "list_items"]
+    );
+    assert_eq!(
+        listed(TOK_ADMIN).await,
+        vec!["create_item", "get_item", "list_items", "list_tenants"]
+    );
+
+    // The name itself must be absent from a customer's bytes, not merely un-callable.
+    let (_, body) = rpc(
+        &f.url,
+        Some(TOK_A),
+        json!({ "jsonrpc": "2.0", "id": 10, "method": "tools/list" }),
+    )
+    .await;
+    assert!(
+        !body.to_string().contains("list_tenants"),
+        "a workspace credential must not see the operator tool's name: {body}"
     );
 }
 

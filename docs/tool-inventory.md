@@ -25,6 +25,10 @@ that lane implements, nothing more.
 7. **Tool names carry the app slug** (`funnelswift_list_funnels`) so one agent conversation can
    hold several doors without ambiguity. Exception: CoreSwift's existing custom-object tools keep
    their shipped names (clients already call them).
+8. **`tools/list` is filtered by the caller's role.** A tool whose `min_role` is above the resolved
+   credential is absent from the list — an operator-only tool name must never appear in a customer
+   key's `tools/list`, and a read-only key is not offered write tools. The role is set on the
+   `ToolSpec`, not inferred at list time (crate 0.4.0 / 0.1.2-axum07; kanban t_201dadc5).
 
 ## Summary
 
