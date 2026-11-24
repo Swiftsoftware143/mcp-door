@@ -22,6 +22,8 @@ pub const TOK_B: &str = "tok_b_workspace";
 pub const TOK_READONLY: &str = "tok_a_readonly";
 pub const TOK_ADMIN: &str = "tok_ops_admin";
 pub const TOK_REVOKED: &str = "tok_revoked";
+/// A LIVE customer credential reaching an operator-only door: authenticated, not authorised.
+pub const TOK_CUSTOMER: &str = "tok_customer_refused";
 
 #[derive(Clone, Debug)]
 struct Item {
@@ -110,6 +112,7 @@ impl CredentialResolver for Auth {
                 .with_tenant(tenant_a())
                 .with_home(tenant_a())),
             TOK_REVOKED => Err(AuthError::Revoked),
+            TOK_CUSTOMER => Err(AuthError::Forbidden),
             _ => Err(AuthError::Invalid),
         }
     }

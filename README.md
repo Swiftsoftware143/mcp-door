@@ -52,6 +52,12 @@ Pin a `rev`, not a branch: a door that changes under a product between builds is
    `python3 scripts/door-contract.py https://<app-host>/mcp --workspace-token … --readonly-token …
    --admin-token … --revoked-token …`. Both must pass before the door is announced.
 
+### Version and axum
+
+This is the **axum 0.7 maintenance line (0.1.1)**. The crate's main line (0.3.0) is built on axum
+0.8 and cannot merge into a 0.7 host; a product still on axum 0.7 — ADASwift today — pins this
+revision. The only difference from the main line is the axum generation: the transport, the
+credential contract, the 401/403 semantics and the tests are the same code.
 `examples/reference-door.rs` is the copy-paste template: four tools, three key kinds, one operator
 key, one revoked key, audit to a file.
 
@@ -62,11 +68,29 @@ that alters wire behaviour bumps the minor version and is recorded in the fleet 
 constants mirror `/opt/swift/mcp` (the read hub) — the two must never disagree about what version
 they speak.
 
+### Access classes: the resolver decides 401 vs 403
+
+Two things are called "a refusal" and they are not the same:
+
+| The caller | Resolver returns | Door answers |
+|---|---|---|
+| no bearer, unknown token, revoked/expired row | `AuthError::Invalid` / `Revoked` / `Expired` / `Missing` | **401** `-32001`, `WWW-Authenticate: Bearer` |
+| a live credential whose role may not reach this door at all | `AuthError::Forbidden` | **403** `-32003`, no tool list, no `WWW-Authenticate` |
+| authenticated but a tool's minimum role is higher | the tool runs and answers `ToolError::Forbidden` (an MCP `isError` result) | 200 |
+
+An **admin-only door** must return `AuthError::Forbidden` for a customer key: 401 would tell a live
+customer their key is unknown, and any tool list at all (even an empty one) advertises a surface
+they may not use. Pin it with the contract test
+`a_live_customer_credential_on_an_operator_door_is_403_and_lists_no_tool` and on the live door.
+Also set `.min_role(Role::Admin)` on every tool of such a door — defence in depth, so a future
+resolver slip cannot re-open the surface.
+
 ## Verification (this revision)
 
-- `cargo test` — 19 unit + 12 contract tests, including 401 with no detail, foreign id →
-  `not_found` (and the owner still reads it), role gates, pagination to exhaustion, annotations on
-  every tool, redaction, notification 202, batch refusal, parse error.
+- `cargo test` — 19 unit + 13 contract tests, including 401 with no detail,
+  **403 (`-32003`, no tool list) for a live customer credential on an operator-only door**,
+  foreign id → `not_found` (and the owner still reads it), role gates, pagination to exhaustion,
+  annotations on every tool, redaction, notification 202, batch refusal, parse error.
 - `scripts/door-contract.py` against the live reference door — 14/14 checks.
 - Live fixture proof: A cannot read B's item (same answer as a missing id), B can; a read-only key
   cannot write; a workspace key cannot call the admin tool; the audit file has zero token strings

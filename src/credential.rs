@@ -129,6 +129,13 @@ pub enum AuthError {
     Revoked,
     /// Expired by its own timestamp.
     Expired,
+    /// The credential is genuine and live, but its role may not reach this door AT ALL — an
+    /// **admin-only** door handed a customer key. Authenticated, not authorised: the transport
+    /// answers 403, never 401 (the caller was recognised) and never a tool list.
+    ///
+    /// Use this only for a property of the CALLER's own credential (its role, or the operator
+    /// authority of the user who minted it). A row the caller may not see is `NotFound`, not this.
+    Forbidden,
     /// The app could not decide (database down, misconfiguration). Still a 401 to the caller.
     Unavailable(String),
 }
@@ -140,6 +147,9 @@ impl AuthError {
             AuthError::Invalid => "invalid".into(),
             AuthError::Revoked => "revoked".into(),
             AuthError::Expired => "expired".into(),
+            AuthError::Forbidden => {
+                "forbidden: live credential without the role this door requires".into()
+            }
             AuthError::Unavailable(why) => format!("unavailable: {why}"),
         }
     }

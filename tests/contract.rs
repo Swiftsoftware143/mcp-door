@@ -36,6 +36,39 @@ async fn unauthenticated_and_bad_tokens_are_401_with_no_detail() {
 }
 
 #[tokio::test]
+async fn a_live_customer_credential_on_an_operator_door_is_403_and_lists_no_tool() {
+    // The admin-only access class (fleet MCP standard §4). A door that answered this with a tool
+    // list, or with 401 (pretending a live key is unknown), is the defect this test exists for.
+    let f = start().await;
+    for method in ["tools/list", "tools/call"] {
+        let (status, body) = rpc(
+            &f.url,
+            Some(TOK_CUSTOMER),
+            json!({"jsonrpc": "2.0", "id": 1, "method": method,
+                   "params": {"name": "list_items", "arguments": {}}}),
+        )
+        .await;
+        assert_eq!(status, 403, "{method} must be refused before any tool runs");
+        assert_eq!(body["error"]["code"], -32003, "{body}");
+        assert_eq!(body["error"]["message"], "forbidden");
+        assert!(
+            body.get("result").is_none(),
+            "{method} must return no result and no tool list: {body}"
+        );
+    }
+    let lines = audit_lines(&f.audit);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l["outcome"].as_str().unwrap_or("").contains("forbidden")),
+        "the refusal is audited: {lines:?}"
+    );
+    // The audit names the reason, never the secret.
+    let raw = std::fs::read_to_string(&f.audit).unwrap_or_default();
+    assert!(!raw.contains(TOK_CUSTOMER));
+}
+
+#[tokio::test]
 async fn legacy_initialize_and_modern_discover_both_answer() {
     let f = start().await;
 
