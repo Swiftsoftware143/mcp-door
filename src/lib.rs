@@ -50,8 +50,9 @@
 //! let door = Door::builder("coreswift", "1.0.0", registry, auth::Resolver::new(pool.clone()))
 //!     .audit("/opt/swift/coreswift/data/mcp-audit.log")
 //!     .build()?;
-//! // mount at POST /mcp inside the app's existing axum router
-//! let app = app.merge(Arc::new(door).router("/mcp"));
+//! // mount POST /mcp inside the app's existing axum router (the fleet recipe: no /healthz,
+//! // so it merges into an app that already answers GET /healthz and GET /mcp)
+//! let app = app.merge(Arc::new(door).mount());
 //! ```
 //!
 //! The resolver is the app's own authentication code. The skeleton ships

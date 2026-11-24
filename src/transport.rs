@@ -172,12 +172,44 @@ impl Door {
         &self.registry
     }
 
-    /// Mount this door inside the app's existing axum router.
+    /// Mount this door inside the app's existing axum router: **the fleet recipe**.
+    ///
+    /// It serves only the MCP route (`config.path`, `POST`) plus the body limit — no `/healthz` —
+    /// so it merges into an app that already answers `GET /healthz` and `GET <path>` without an
+    /// overlapping-route panic. The app keeps its own health route and its own `GET` on the path
+    /// (e.g. a human-readable `mcp/info` page); the door owns `POST <path>`.
+    ///
+    /// ```ignore
+    /// let app = app
+    ///     .route("/mcp", axum::routing::get(mcp_info)) // optional, the host's own GET
+    ///     .merge(door.clone().mount());
+    /// ```
+    ///
+    /// Every fleet app is on axum 0.8, so this router merges directly; a 0.7 app cannot consume
+    /// this crate at all (an axum 0.7 `Router` cannot join an 0.8 one).
+    pub fn mount(self: Arc<Self>) -> Router {
+        let path = self.config.path.clone();
+        self.mount_at(&path)
+    }
+
+    /// [`Door::mount`] at an explicit path, for a door whose `config.path` is not the final route.
+    pub fn mount_at(self: Arc<Self>, path: &str) -> Router {
+        let limit = self.config.max_body_bytes;
+        Router::new()
+            .route(path, post(handle))
+            .layer(DefaultBodyLimit::max(limit))
+            .with_state(self)
+    }
+
+    /// A **standalone** router for a door that is the whole service: the MCP route plus
+    /// `GET /healthz`. Do not merge this into an app router that already answers `/healthz` —
+    /// two `GET /healthz` routes panic at merge. Apps use [`Door::mount`].
     pub fn router(self: Arc<Self>) -> Router {
         let path = self.config.path.clone();
         self.router_at(&path)
     }
 
+    /// [`Door::router`] at an explicit path (standalone use only, see the warning there).
     pub fn router_at(self: Arc<Self>, path: &str) -> Router {
         let limit = self.config.max_body_bytes;
         Router::new()

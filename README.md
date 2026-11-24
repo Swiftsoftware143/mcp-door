@@ -47,10 +47,23 @@ Pin a `rev`, not a branch: a door that changes under a product between builds is
    `ctx.scope.sql_filter("t.tenant_id", 2)` inside the statement.
 3. **Build the door** — `Door::builder(name, version, registry, resolver).audit(path).build()?`.
    A bad registry fails at startup, not on a customer's first call.
-4. **Mount it** inside the app's existing router: `router = router.merge(Arc::new(door).router())`.
-5. **Prove it** — `cargo test` (the contract suite in `tests/contract.rs`) and
+4. **Mount it** inside the app's existing axum 0.8 router: `router = router.merge(Arc::new(door).mount())`.
+   `mount()` adds **only** `POST <path>` (and the body limit), so it merges into any app that
+   already answers `GET /healthz` and its own `GET <path>` — the shape every fleet app has.
+   `router()` / `router_at()` are for a **standalone** door that is the whole service: they also
+   claim `GET /healthz`, and merging one into an app that has a health route panics at merge.
+   Do not hand-write a `post(dispatch)` adapter: `mount()` is the one implementation, and it keeps
+   status, headers (`WWW-Authenticate`) and the audit path identical in every app.
+5. **Prove it** — `cargo test` (the contract suite in `tests/contract.rs` and the mount test in
+   `tests/mount.rs`) and
    `python3 scripts/door-contract.py https://<app-host>/mcp --workspace-token … --readonly-token …
    --admin-token … --revoked-token …`. Both must pass before the door is announced.
+
+### Version and axum
+
+This crate is **0.2.0 and built on axum 0.8**. Every fleet app is on axum 0.8; a 0.7 host cannot
+consume this crate at all (an axum 0.7 `Router` cannot merge into an 0.8 `Router`) and must stay on
+the last 0.7 revision (`15aef65`) with its own adapter until it upgrades.
 
 `examples/reference-door.rs` is the copy-paste template: four tools, three key kinds, one operator
 key, one revoked key, audit to a file.
@@ -64,9 +77,11 @@ they speak.
 
 ## Verification (this revision)
 
-- `cargo test` — 19 unit + 12 contract tests, including 401 with no detail, foreign id →
-  `not_found` (and the owner still reads it), role gates, pagination to exhaustion, annotations on
-  every tool, redaction, notification 202, batch refusal, parse error.
+- `cargo test` — 19 unit + 12 contract + 1 mount test on axum 0.8, including 401 with no detail,
+  foreign id → `not_found` (and the owner still reads it), role gates, pagination to exhaustion,
+  annotations on every tool, redaction, notification 202, batch refusal, parse error, and
+  `mount()` merging into a host that already serves `GET /healthz` and `GET /mcp` (host routes
+  survive, `WWW-Authenticate` survives).
 - `scripts/door-contract.py` against the live reference door — 14/14 checks.
 - Live fixture proof: A cannot read B's item (same answer as a missing id), B can; a read-only key
   cannot write; a workspace key cannot call the admin tool; the audit file has zero token strings

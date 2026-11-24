@@ -37,7 +37,7 @@ pub struct Store {
 }
 
 impl Store {
-    fn seeded() -> Self {
+    pub fn seeded() -> Self {
         let beta_id = Uuid::new_v4();
         let items = vec![
             Item {
@@ -97,7 +97,7 @@ impl Store {
     }
 }
 
-struct Auth;
+pub struct Auth;
 
 #[async_trait]
 impl CredentialResolver for Auth {
@@ -115,7 +115,7 @@ impl CredentialResolver for Auth {
     }
 }
 
-fn registry(store: Store) -> Registry {
+pub fn registry(store: Store) -> Registry {
     let list_store = store.clone();
     let get_store = store.clone();
     let create_store = store.clone();
