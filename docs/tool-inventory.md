@@ -249,17 +249,28 @@ Never exposed: `machine_keys`, `provider_credentials`, `client_portal_tokens`, `
 
 ## Engine — ADMIN ONLY (David's 9 workspaces)
 
-Engine **already ships** `POST /mcp` (928 LOC, 22 tools, per-workspace token, verified 2026-11-23:
-rule fired via `/rt/v1/content`, `rank_offers` arithmetic, `embed.js` injection). The port is not a
-rewrite: replace the hand-rolled auth/transport/registry with the crate, keep all 22 tool behaviours,
-and add the one admin tool. Scope `workspace_id`; credential `api_tokens` (9 sealed tokens in
-`/opt/swift/secure/engine-mcp-tokens.env`).
+**PORTED 2026-11-24 (card `t_f95ab1a9`)** onto crate rev `11629b9`. Live at
+`https://engine.mcontrol.fyi/mcp`: 23 tools, `door-contract.py` 14/14, all 22 pre-existing payloads
+byte-identical before/after (proved with frozen calls incl. three `decide_content` negative
+controls and `rank_offers` 100.00 at 10% → 10.0 / 90.00). Record:
+`/opt/swift/docs/engine-mcp-rebase-2026-11-24.md`.
+
+Engine shipped `POST /mcp` by hand first (928 LOC, 22 tools, verified 2026-11-23). The port replaced
+the hand-rolled auth/transport/registry with the crate, kept all 22 tool behaviours, and added the
+one admin tool. Scope `workspace_id`; credential `api_tokens` (9 sealed workspace tokens +
+1 sealed operator token in `/opt/swift/secure/engine-mcp-tokens.env`).
+
+Two things a sibling port should copy:
+
+* the crate is on **axum 0.8** (`0.7` cannot merge into any fleet app's router) — pin `11629b9` or later;
+* `Registry::validate` refuses to start on a description under 20 chars, so writing tool
+  descriptions for a model is a build gate, not a nicety (`get_rule` was `"One rule by id."`).
 
 | Tool | Reads / writes | Scope | Role | Notes |
 |---|---|---|---|---|
-| existing 22 (`engine_whoami`, `list_rules`, `get_rule`, `create_rule`, `update_rule`, `set_rule_status`, `decide_content`, `list_offers`, `list_giveaways`, `create_offer`, `set_offer_status`, `rank_offers`, `analytics`, `list_audiences`, `create_audience`, `list_integrations`, `pm_*` ×5) | **live** | `workspace_id` | workspace | Keep names; the crate supplies transport, 401/404 and audit |
-| `engine_list_workspaces` | read: `workspaces` (9) + counts | all | admin | Replaces the console-only view; operator only |
-| *Human-only, never a tool* | giveaway approval | — | — | No approve tool exists and none may be added |
+| 22 existing (`engine_whoami`, `list_rules`, `get_rule`, `create_rule`, `update_rule`, `set_rule_status`, `decide_content`, `list_offers`, `list_giveaways`, `create_offer`, `set_offer_status`, `rank_offers`, `analytics`, `list_audiences`, `create_audience`, `list_integrations`, `pm_*` ×6) | **live** | `workspace_id` | workspace (8 of them write → `readonly` refused) | Names and payloads unchanged by the port |
+| `engine_list_workspaces` | read: `workspaces` (9) + counts | all | admin | **Shipped.** Names, slugs and counts only — content reads still need that workspace's own token |
+| *Human-only, never a tool* | giveaway approval | — | — | No approve tool exists; a call answers `-32602 unknown tool` |
 
 Traps to keep: media is stored as `bytea` — `media_assets` returns metadata and the door's own asset
 URL, never the bytes; `pm_render` is expensive — keep its timeout and row cap.
