@@ -43,7 +43,7 @@ that lane implements, nothing more.
 | Multi-Directory | `/admin/mcp` | **admin only** | `api_keys` (`tenant_id`, `key_prefix`, `is_active`) — tenant id is **not** a directory id | `directory_id` | 9 reads |
 | XDispatch | `/admin/mcp` | **admin only** | `machine_keys` (`tenant_id`) + its own resolver | `tenant_id` | 8 reads |
 | Engine | `/mcp` (re-based on the crate) | **admin only** (David's 9 workspaces) | `api_tokens` (`workspace_id`, sealed) — **already live** | `workspace_id` | 22 existing + 1 admin |
-| Studio | `/admin/mcp` | **admin only** | no key table today — the port adds one single-purpose `door_tokens` row (sha256 hash, label, `revoked_at`); a session cookie is not an API credential | n/a (single store) | 6 reads |
+| Studio | `/mcp` | **per workspace** (David, 2026-11-25: "Studio is per WORKSPACE, not per account") | `api_keys` (`workspace_id`, 12-char `key_prefix`, salted Argon2id `key_hash`, sealed copy for View, `revoked_at`); minted by the operator console only | `workspace_id` (assets, posts, accounts, X queue) + slug/name/alias for Library pages | 6 reads |
 
 Verified-live row counts are quoted per app to justify each tool and to tell a real zero from a
 broken filter ("the table exists and holds 4 rows" vs "the table is empty fleet-wide").
@@ -305,25 +305,31 @@ URL, never the bytes; `pm_render` is expensive — keep its timeout and row cap.
 
 ---
 
-## Studio — ADMIN ONLY (no customer access)
+## Studio — PER WORKSPACE, read-only (shipped 2026-11-25, card t_c8d82f56)
 
-**Correction to the card, measured 2026-11-24:** Studio is **not** databaseless. It owns
-`/opt/swift/studio/data/studio.db` (SQLite, 14 tables: `assets` 5, `publish_workspaces` 14,
-`publish_events` 2, `staged` 1, `sessions` 63, `users` 1, plus `api_quota`, `posts`, `twitter_queue`,
-`engine_heartbeat`, `plan_events`, `platform_accounts`, `post_media_links`). The storage decision is
-therefore: **keep SQLite; no migration for read tools.** The door runs in the Studio process and
-uses its existing `rusqlite` handle on the blocking pool. If Studio ever moves to Postgres only the
-tool handlers change — the crate is untouched.
+**Superseded ruling:** the 2026-11-24 draft above planned an admin-only door with a `door_tokens`
+row. David's 2026-11-25 directive is the opposite: **Studio is per WORKSPACE, not per account.**
+Shipped that way.
+
+Studio owns `/opt/swift/studio/data/studio.db` (SQLite). The door runs in the Studio process on the
+shared crate's axum-0.7 line (rev `7950337`, `0.1.2`) and reads through the app's existing `rusqlite`
+handle on the blocking pool. A session cookie is **not** an API credential: only `api_keys` rows
+authenticate the door.
 
 | Tool | Reads | Scope | Role | Notes |
 |---|---|---|---|---|
-| `studio_list_assets` | `assets` + `post_media_links` | all (single store) | admin | filename, mime, bytes, tags; never the file bytes |
-| `studio_list_publish_targets` | `publish_workspaces` (14) | all | admin | workspace + host + active |
-| `studio_publish_status` | `publish_events` (2) + `engine_heartbeat` | all | admin | last result + timestamp |
-| `studio_list_pages` | served pages (static, `include_str!`) with a content hash | all | admin | Reads the served root, so a stale copy is visible |
-| `studio_list_posts` | `posts`, `twitter_queue`, `staged` | all | admin | queued/scheduled/done counts |
-| `studio_list_sessions` | `sessions` count only | all | admin | Never the session token or the user row |
-| *Phase 2* | publish is **not** a tool: it stays the console's `approved`-status action | — | — | A tool that publishes is L3 |
+| `studio_whoami` | `publish_workspaces` + counts | own workspace | workspace | Confirms which business the key is |
+| `studio_list_pages` | `staged` | own workspace via slug/name/aliases | workspace | Filters kind/status/limit inside the statement |
+| `studio_get_page` | `staged` | same | workspace | Foreign slug → `not_found` |
+| `studio_list_assets` | `assets` | `workspace_id` | workspace | Category/search/limit in SQL; view link is the workspace's own |
+| `studio_get_asset` | `assets` | `workspace_id` | workspace | Foreign id/slug → `not_found` |
+| `studio_publish_status` | `posts`, `platform_accounts`, `publish_events`, `twitter_queue` | `workspace_id` | workspace | **Never** selects `access_token_ct` / `refresh_token_ct` |
+| *Not a tool* | publishing, upload, edit, share, revoke | — | — | Console only; the read-only registry test fails if a write tool appears |
+
+Operator surface: `GET/POST /api/keys`, `POST /api/keys/:id/revoke`, `GET /api/keys/:id/reveal`
+(masked value in the list, audited reveal in `key_audit`, plan §6) and a **Keys** panel in the console.
+Proof: `studio/scripts/studio-mcp-acceptance.py` 41/41 + `door-contract.py`; record
+`/opt/swift/docs/studio-per-workspace-keys-and-mcp-2026-11-25.md`.
 
 ---
 
@@ -333,7 +339,7 @@ tool handlers change — the crate is untouched.
 2. **WorkflowSwift + MissedCall + ADASwift** (small, single-key-column apps; `aid`/`tenant_id`).
 3. **FunnelSwift + IncentiveSwift** (IncentiveSwift needs the `account_id` mapping resolved first).
 4. **Engine re-base** (behaviour-preserving; the only port that removes hand-rolled auth).
-5. **Multi-Directory, XDispatch, Studio** (admin-only; each has its own id-space trap named above).
+5. **Multi-Directory, XDispatch** (admin-only; each has its own id-space trap named above). **Studio is PORTED** (per-workspace, read-only — see its section).
 
 Each port is its own card in that app's lane, carries this table as its spec, and is done only when
 `cargo test` (crate contract) **and** `scripts/door-contract.py` **and** the app-specific calls
