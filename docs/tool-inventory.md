@@ -35,13 +35,13 @@ that lane implements, nothing more.
 | App | Door | Audience | Credential table (measured columns) | Scope id | Tools (this phase) |
 |---|---|---|---|---|---|
 | CoreSwift | `/api/mcp` (merged into the app router) | customer | `personal_api_keys` (`tenant_id`, `key_prefix`, `is_active`; sealed with AES-GCM) | `tenant_id` | custom objects (11, **live**) + 12 domain reads |
-| FunnelSwift | `/mcp` | customer | `api_keys` (`tenant_id`, `key_prefix`, `revoked_at`) | `tenant_id` | 11 reads |
+| FunnelSwift | `/mcp` | customer | `api_keys` (`tenant_id`, `key_prefix`, `revoked_at`) | `tenant_id` | 11 reads + 12 writes |
 | IncentiveSwift | `/mcp` | customer | `api_keys` (`tenant_id`, `prefix`, `is_active`) — **key table uses `tenant_id`, data uses `account_id`** | `account_id` | 10 reads |
 | WorkflowSwift | `/mcp` | customer | `api_keys` (`aid`, `prefix`, `is_active`) | `aid` | 10 reads |
 | ADASwift | `/mcp` | **admin only** (David, 2026-11-24: "clients get no MCP access at all") | `api_keys` (`tenant_id`, `key_prefix`, `revoked_at`, `role` must be a platform-admin role) | `tenant_id` | 8 reads + 3 operator tools |
 | MissedCall Respondr | `/mcp` | customer | `api_keys` (`tenant_id`, `key_prefix`, `revoked_at`) | `tenant_id` | 9 reads |
 | Multi-Directory | `/admin/mcp` | **admin only** | `api_keys` (`tenant_id`, `key_prefix`, `is_active`) — tenant id is **not** a directory id | `directory_id` | 9 reads |
-| XDispatch | `/admin/mcp` | **admin only** | `machine_keys` (`tenant_id`) + its own resolver | `tenant_id` | 8 reads |
+| XDispatch | `/mcp` (conjoined) + `/admin/mcp` | company key (dispatch) + platform key (reads) | `machine_keys` (`tenant_id`, `secret_sha256`, `scopes`) | `tenant_id` | 25 dispatch verbs + 8 operator reads |
 | Engine | `/mcp` (re-based on the crate) | **admin only** (David's 9 workspaces) | `api_tokens` (`workspace_id`, sealed) — **already live** | `workspace_id` | 22 existing + 1 admin |
 | Studio | `/mcp` | **per workspace** (David, 2026-11-25: "Studio is per WORKSPACE, not per account") | `api_keys` (`workspace_id`, 12-char `key_prefix`, salted Argon2id `key_hash`, sealed copy for View, `revoked_at`); minted by the operator console only | `workspace_id` (assets, posts, accounts, X queue) + slug/name/alias for Library pages | 6 reads |
 
@@ -97,7 +97,8 @@ Door: `POST /mcp`, `api_keys.tenant_id` / `key_prefix` / `revoked_at IS NULL`. W
 | `funnelswift_list_email_domains` | read: `private_email_domains` (25) — sending domains | `tenant_id` | read_only | Never the DKIM private key |
 | `funnelswift_list_invoices` | read: `invoices` (8) | `invoices.tenant_id` | read_only | Amount + status + currency; no payment references |
 | `funnelswift_list_affiliate_products` | read: `affiliate_products` (20) + rate bands | `tenant_id` | read_only | Commission rate is the account's own data |
-| *Phase 2 (L2)* | `funnelswift_set_lead_stage`, `funnelswift_tag_lead` | — | workspace | Reversible; own card |
+| **Write tier (shipped 2026-11-25, §9)** | `create_funnel`/`update_funnel`/`archive_funnel`, `create_page`/`update_page`/`archive_page`, `create_lead`/`update_lead`/`archive_lead`, `create_tag`/`update_tag`/`archive_tag` | the four entities the product owns | workspace | Each calls the app's OWN handler (funnel/kinetic/lead/tag), so validation, plan allowances and slug allocation cannot drift. Archive = `is_active=false` (funnel, page) or `status='archived'` (lead); a tag has no archive column, so `archive_tag` refuses unless `hard_delete=true`. Every write leaves one `activity_log` row (`user_id = mcp-key:<key id>`, entity, entity id, outcome); refusals are audited too. A foreign id answers `not_found`; platform-admin routes refuse the key 403. Proof: `scripts/mcp-s9-write-acceptance.py` 31/31 live. |
+| *Retired Phase 2 line* | `funnelswift_set_lead_stage`, `funnelswift_tag_lead` are covered by `update_lead` | — | workspace | No separate tools |
 
 Never exposed: `api_keys`, `webhooks.secret`, `webhook_delivery_log` payload headers, `provider_keys`,
 `payment_webhook_events`, `email_send_log`.
@@ -269,7 +270,7 @@ authority; the door reuses it. Scope `tenant_id` (1 tenant today).
 | `xd_list_invoices` | `invoices` + `invoice_lines` | `tenant_id` | admin | totals + status; no `sent_pdf_sha256` |
 | `xd_list_payments` | `payments` | `tenant_id` | admin | amount + status; no provider reference |
 | `xd_list_notifications` | `notification_log` (328) | `tenant_id` | admin | kind + delivery state; no message bodies with personal data |
-| *Phase 2* | writes stay in the existing machine route; the door adds none | — | — | Company-key writes are already shipped there |
+| **Write tier (shipped 2026-11-25, §9)** | on `/mcp` AND `/api/v1/*`: `create_job`/`update_job`/`archive_job`, `update_quote`/`archive_quote` (`create_quote` shipped), `create_account`/`update_account`/`archive_account`, `create_driver`/`update_driver`/`archive_driver` (+ `list_drivers`/`get_driver`) | jobs, quotes, client_accounts, drivers | company key with `write` scope | ONE value function per write serves both surfaces (`src/routes/machine_writes.rs`). Archive never deletes: job = `cancelled` + reason + `cancelled_at`, quote = `expired`, account = `is_active=false`, driver = `active=false`. Every write inserts one `audit_log` row (`actor = api-key:<prefix>`, subject `<entity>:<id>`). A platform key is refused (`platform_read_only` / `insufficient_scope`), a read-scoped key `insufficient_scope`, a foreign id `not_found`. Invoices and payments stay read-only: the company's financial documents are the app's billing run, the one class §9 keeps off a customer credential. Proof: `scripts/mcp-s9-write-acceptance.py`. |
 
 Never exposed: `machine_keys`, `provider_credentials`, `client_portal_tokens`, `dispatch_sessions`.
 
