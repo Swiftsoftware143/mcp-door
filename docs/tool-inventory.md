@@ -346,3 +346,32 @@ Each port is its own card in that app's lane, carries this table as its spec, an
 `cargo test` (crate contract) **and** `scripts/door-contract.py` **and** the app-specific calls
 (foreign id → `not_found`, second workspace blind, audit line present without the token) pass against
 the live endpoint.
+
+---
+
+## Write tools shipped 2026-11-25 (card t_bb4d4d33, §9 of the standard)
+
+Full read+write for company CEOs. Naming `<slug>_create|update|archive_<entity>`; every write is
+`ToolSpec::write` (min_role Workspace), so a read-only key neither sees it nor can call it. Scope is
+the credential's own tenant, enforced inside each statement; a foreign id answers `not_found`.
+
+| App | Tools before → after | Entities with create/update/archive |
+|---|---|---|
+| WorkflowSwift | 10 → 25 | workflows, templates, dashboards, clients, tags (archive = `is_active=false`) |
+| MissedCall | 9 → 25 | contacts (new `archived_at`), campaigns, response rules, follow-ups (new `archived_at`); suppressions create+remove (`hard:true` only); numbers update+archive (no create — Telnyx purchase spends money) |
+| Engine | 23 → 28 (workspace token sees 27) | offers update/archive, rules archive, audiences update/archive (new `archived_at`; rules/offers status `archived`) |
+| Studio | 6 → 10 | pages update/archive, assets update/archive (no create: rows come from the manifest scan / upload ingest) |
+
+REST parity: WorkflowSwift `/api/v1` (workflows, templates, tags + new clients/dashboards CRUD),
+MissedCall `/api/v1` (existing tenant CRUD), Engine `/api/rules|offers|audiences` (Bearer
+`api_tokens` forced to the token's workspace; a disagreeing `?ws=` is refused), Studio
+`/api/agent/pages|assets` (key auth, same scoping).
+
+Deliberately still read-only: WorkflowSwift runs/invoices/integrations/provider keys, MissedCall
+calls/messages/tickets (transcripts and help desk), Engine media/giveaways/tokens/integrations,
+Studio publishing/upload/share/revoke. Each is either an execution record, a billing surface, a
+credential, or an approval gate.
+
+Proof harnesses (live): `WorkflowSwift/scripts/mcp-write-acceptance.py` 80/80,
+`missedcallrespondr/scripts/mcp-write-acceptance.py` 59/59,
+`Engine/scripts/mcp-write-acceptance.py` 52/52, `studio/scripts/mcp-write-acceptance.py` 41/41.
