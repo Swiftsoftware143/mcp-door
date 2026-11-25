@@ -36,7 +36,7 @@ that lane implements, nothing more.
 |---|---|---|---|---|---|
 | CoreSwift | `/api/mcp` (merged into the app router) | customer | `personal_api_keys` (`tenant_id`, `key_prefix`, `is_active`; sealed with AES-GCM) | `tenant_id` | custom objects (11, **live**) + 12 domain reads |
 | FunnelSwift | `/mcp` | customer | `api_keys` (`tenant_id`, `key_prefix`, `revoked_at`) | `tenant_id` | 11 reads + 12 writes |
-| IncentiveSwift | `/mcp` | customer | `api_keys` (`tenant_id`, `prefix`, `is_active`) — **key table uses `tenant_id`, data uses `account_id`** | `account_id` | 10 reads |
+| IncentiveSwift | `/mcp` | customer | `api_keys` (`tenant_id`, `prefix`, `is_active`) — **key table uses `tenant_id`, data uses `account_id`** | `account_id` | 27 reads + 45 writes |
 | WorkflowSwift | `/mcp` | customer | `api_keys` (`aid`, `prefix`, `is_active`) | `aid` | 10 reads |
 | ADASwift | `/mcp` | **admin only** (David, 2026-11-24: "clients get no MCP access at all") | `api_keys` (`tenant_id`, `key_prefix`, `revoked_at`, `role` must be a platform-admin role) | `tenant_id` | 8 reads + 3 operator tools |
 | MissedCall Respondr | `/mcp` | customer | `api_keys` (`tenant_id`, `key_prefix`, `revoked_at`) | `tenant_id` | 9 reads |
@@ -125,7 +125,7 @@ must filter on `account_id` wherever it exists.
 | `incentiveswift_list_offers` | read: `offers` | `tenant_id` (= account id) | read_only | discount/cap/active only |
 | `incentiveswift_list_inbound_messages` | read: `inbound_messages` (84) excerpt | `account_id` | read_only | **Untrusted customer text** |
 | `incentiveswift_list_tickets` | read: `support_tickets` (4) | `tenant_id` | read_only | Excerpt untrusted |
-| *Phase 2 (L2)* | `incentiveswift_set_campaign_status` | — | workspace | Reversible |
+| **Write tier (shipped 2026-11-25, §9)** | `incentiveswift_create_*` / `update_*` / `archive_*` for 15 entities: campaigns, offers, loyalty programs, reward tiers, milestones, secret codes, earn channels, email templates, iqs funnels, business deals, calendar events, reviews, support tickets, domains, leads | own `account_id` / `tenant_id` (sub-entities through the parent's ownership) | workspace | Archive is soft (`status`/`is_active`) by default; hard delete only behind an explicit `hard_delete` flag (tiers + email templates have no archive state, so the flag is required). Sub-entity create probes the parent; update/archive scope the predicate on the statement (`rows_affected == 0` → `not_found`). Foreign id → `not_found`, platform-admin REST → 403. Proof: 64/64 smoke checks live on the ZaarHub/giraudy tenants. |
 
 Never exposed: `api_keys`, `provider_keys`, `pending_emails`, `point_expiry_audit` internals,
 `stripe_checkout_sessions`.
